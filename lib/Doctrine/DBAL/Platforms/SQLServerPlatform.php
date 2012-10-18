@@ -680,10 +680,40 @@ class SQLServerPlatform extends AbstractPlatform
     protected function doModifyLimitQuery($query, $limit, $offset = null)
     {
         if ($limit > 0) {
-            if ($offset == 0) {
-                $query = preg_replace('/^(SELECT\s(DISTINCT\s)?)/i', '\1TOP ' . $limit . ' ', $query);
-            } else {
-                $orderby = stristr($query, 'ORDER BY');
+
+                // Get thr ORDER BY clause
+                $matches = array();
+                $hasOrder = preg_match('/ORDER BY\s[^\)]*/i', $query, $matches);
+                $orderby = $hasOrder === 1 ? $matches[0] : '';
+
+                // Check if this is a DISTINCT
+                $isDistinct = 0;
+                $query = preg_replace('/^SELECT DISTINCT/i', 'SELECT', $query, 1, $isDistinct);
+
+                // Check if this is a wrapped query and we need to use the orderby alias
+                if($hasOrder === 1 && preg_match('/FROM\s*\([^\)]+\)/i', $query))
+                {
+                    $orders = explode(',', preg_replace('/ORDER BY\s+/', '', $orderby));
+
+                    $aliasOrder = array();
+
+
+                    foreach($orders as $order)
+                    {
+                        preg_match('/^([^\s]+)\s+(ASC|DESC)/', $order, $matches);
+
+                        $column = $matches[1];
+                        $direction = $matches[2];
+
+                        $regex = sprintf('/%s\s+AS\s([A-Za-z0-9_]+)/', $column);
+                        preg_match($regex, $query, $matches);
+                        $alias = $matches[1];
+
+                        $aliasOrder[] = $alias . ' ' . $direction;
+                    }
+
+                    $orderby = 'ORDER BY ' . implode(', ', $aliasOrder);
+                }
 
                 if ( ! $orderby) {
                     $over = 'ORDER BY (SELECT 0)';
@@ -692,15 +722,18 @@ class SQLServerPlatform extends AbstractPlatform
                 }
 
                 // Remove ORDER BY clause from $query
-                $query = preg_replace('/\s+ORDER BY(.*)/', '', $query);
-                $query = preg_replace('/^SELECT\s/', '', $query);
+                $query = preg_replace('/\s+ORDER BY([^\)]*)/', '', $query);
+
+                // Remove SELECT and DISTINCT
+                $query = preg_replace('/^(SELECT\s(DISTINCT\s)?)/i', '', $query);
 
                 $start = $offset + 1;
                 $end = $offset + $limit;
 
-                $query = "SELECT * FROM (SELECT ROW_NUMBER() OVER ($over) AS doctrine_rownum, $query) AS doctrine_tbl WHERE doctrine_rownum BETWEEN $start AND $end";
+                $distinctClause = $isDistinct === 1 ? 'DISTINCT' : '';
+                $query = sprintf("SELECT * FROM (SELECT ROW_NUMBER() OVER ($over) AS doctrine_rownum, * FROM ( SELECT %s $query) AS doctrine_tbl) AS doctrine_tbl2 WHERE doctrine_rownum BETWEEN $start AND $end", $distinctClause);
             }
-        }
+        //}
 
         return $query;
     }
