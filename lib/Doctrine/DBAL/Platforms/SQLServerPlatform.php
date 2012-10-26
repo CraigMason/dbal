@@ -292,6 +292,8 @@ class SQLServerPlatform extends AbstractPlatform
      */
     private function _appendUniqueConstraintDefinition($sql, Index $index)
     {
+        return $sql;
+
         $fields = array();
         foreach ($index->getColumns() as $field => $definition) {
             if (!is_array($definition)) {
